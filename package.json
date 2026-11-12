@@ -1,9 +1,21 @@
 {
   "name": "pi-alibaba-cs-usage-extension",
   "version": "0.1.0",
-  "private": true,
+  "description": "Pi extension: Alibaba Cloud Model Studio Token Plan quota (5h / weekly / monthly) in the status line, with reset countdowns.",
+  "license": "Apache-2.0",
   "type": "module",
-  "keywords": ["pi-package", "pi", "alibaba-cs-usage"],
+  "keywords": ["pi-package", "pi", "pi-extension", "alibaba", "alibaba-cs-usage", "quota", "usage"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khanton/pi-alibaba-cs-usage.git"
+  },
+  "homepage": "https://github.com/khanton/pi-alibaba-cs-usage#readme",
+  "bugs": "https://github.com/khanton/pi-alibaba-cs-usage/issues",
+  "files": ["index.ts", "README.md", "LICENSE"],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "test": "vitest run"
