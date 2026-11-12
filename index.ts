@@ -41,6 +41,8 @@ import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil
 // ---------------------------------------------------------------------------
 
 const STATUS_KEY = "alibaba-usage";
+/** Prefix of the built-in status line (the fancy-footer widget has its own label). */
+const STATUS_LABEL = "alibaba";
 const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -453,13 +455,15 @@ function nextResetAt(report: UsageReport, now: number): number | undefined {
 }
 
 // --- @llblab/pi-codex-usage-style display --------------------------------
-// Compact "dual" bar: the left half of each cell is the nearest quota window
-// (5h), the right half is the next one (weekly). Same glyphs and logic as
-// pi-codex-usage, plus a countdown to reset. The monthly window stays in the
-// detailed /alibaba-usage panel.
+// Compact bar per quota window, each prefixed with its plan label (5h / 1w /
+// 1mo) exactly like the pi-fancy-footer widget, plus a countdown to reset.
+// Same glyphs and fill logic as pi-codex-usage. Only the two nearest windows
+// are shown; the monthly one stays in the detailed /alibaba-usage panel unless
+// it is one of the two.
 
-const DUAL_BAR_WIDTH = 10;
-const DUAL_BAR_CHARS = ["⠀", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"];
+/** Cells per window bar — half the width of the old combined dual bar. */
+const STATUS_BAR_WIDTH = 5;
+const BAR_CHARS = ["⠀", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"];
 
 function isExhausted(window: UsageWindow): boolean {
   return remainingPercent(window) === 0;
@@ -470,33 +474,17 @@ function filledParts(window: UsageWindow | undefined, totalParts: number): numbe
   return Math.max(1, Math.round(remainingPercent(window) / (100 / totalParts)));
 }
 
-function formatDualLimitBar(primary: UsageWindow, secondary: UsageWindow): string {
-  const primaryParts = filledParts(primary, 20);
-  const secondaryParts = filledParts(secondary, 20);
-  let value = "";
-  for (let index = 0; index < DUAL_BAR_WIDTH; index++) {
-    const leftPart = index * 2 + 1;
-    const rightPart = leftPart + 1;
-    let mask = 0;
-    if (primaryParts >= leftPart) mask |= 1;
-    if (primaryParts >= rightPart) mask |= 2;
-    if (secondaryParts >= leftPart) mask |= 4;
-    if (secondaryParts >= rightPart) mask |= 8;
-    value += DUAL_BAR_CHARS[mask];
-  }
-  return value;
-}
-
-/** Single window: same braille bar, but all 4 cell quadrants (like codex's formatSingleLimitBar). */
-function formatSingleLimitBar(window: UsageWindow): string {
-  const filled = filledParts(window, DUAL_BAR_WIDTH * 4);
+/** One window: all 4 cell quadrants are used (like codex's formatSingleLimitBar). */
+export function formatSingleLimitBar(window: UsageWindow, width = STATUS_BAR_WIDTH): string {
+  const cells = Math.max(1, Math.floor(width));
+  const filled = filledParts(window, cells * 4);
   const partMasks = [1, 4, 2, 8];
   let value = "";
-  for (let index = 0; index < DUAL_BAR_WIDTH; index++) {
+  for (let index = 0; index < cells; index++) {
     const cellParts = Math.min(4, Math.max(0, filled - index * 4));
     let mask = 0;
     for (let part = 0; part < cellParts; part++) mask |= partMasks[part] ?? 0;
-    value += DUAL_BAR_CHARS[mask];
+    value += BAR_CHARS[mask];
   }
   return value;
 }
@@ -538,23 +526,27 @@ export function statusCountdown(primary: UsageWindow, secondary: UsageWindow | u
   return isLongWindow(win) ? `· ${formatDaysLeft(win.resetAt, now)}` : formatResetCountdown(win.resetAt, now);
 }
 
-function formatStatusline(ctx: ExtensionContext, report: UsageReport, stale: boolean): string {
+export function formatStatusline(ctx: ExtensionContext, report: UsageReport, stale: boolean): string {
   const now = Date.now();
   const primary = report.windows[0];
   const secondary = report.windows[1];
-  const label = ctx.ui.theme.fg("accent", "TP");
+  const label = ctx.ui.theme.fg("accent", STATUS_LABEL);
   let body: string;
-  if (primary && secondary) {
-    const bar = formatDualLimitBar(primary, secondary);
-    const exhausted = isExhausted(primary) || isExhausted(secondary);
-    const barText = ctx.ui.theme.bg(exhausted ? "toolErrorBg" : "userMessageBg", ctx.ui.theme.fg("dim", bar));
+  if (primary) {
+    // One narrow bar per window, labelled with the same plan labels as the
+    // fancy-footer widget (5h / 1w / 1mo), so each bar is unambiguous.
+    body = report.windows
+      .slice(0, 2)
+      .map((win) => {
+        const bar = ctx.ui.theme.bg(
+          isExhausted(win) ? "toolErrorBg" : "userMessageBg",
+          ctx.ui.theme.fg("dim", formatSingleLimitBar(win)),
+        );
+        return `${ctx.ui.theme.fg("dim", win.label)} ${bar}`;
+      })
+      .join(" ");
     const countdown = statusCountdown(primary, secondary, now);
-    body = countdown ? `${barText} ${ctx.ui.theme.fg("dim", countdown)}` : barText;
-  } else if (primary) {
-    const bar = formatSingleLimitBar(primary);
-    const barText = ctx.ui.theme.bg(isExhausted(primary) ? "toolErrorBg" : "userMessageBg", ctx.ui.theme.fg("dim", bar));
-    const countdown = statusCountdown(primary, undefined, now);
-    body = countdown ? `${barText} ${ctx.ui.theme.fg("dim", countdown)}` : barText;
+    if (countdown) body += ` ${ctx.ui.theme.fg("dim", countdown)}`;
   } else {
     body = ctx.ui.theme.fg("muted", "n/a");
   }
@@ -1066,7 +1058,7 @@ export default function alibabaUsage(pi: ExtensionAPI) {
       if (!force && shownKey === key) return;
       shownKey = key;
       clearTimers();
-      setStatus(ctx, `${ctx.ui.theme.fg("muted", "TP")} ${ctx.ui.theme.fg("dim", "вход: /alibaba-usage login")}`);
+      setStatus(ctx, `${ctx.ui.theme.fg("muted", STATUS_LABEL)} ${ctx.ui.theme.fg("dim", "вход: /alibaba-usage login")}`);
       return;
     }
     const state = readState();
@@ -1075,7 +1067,7 @@ export default function alibabaUsage(pi: ExtensionAPI) {
       if (!force && shownKey === key) return;
       shownKey = key;
       clearTimers();
-      setStatus(ctx, `${ctx.ui.theme.fg("muted", "TP")} ${ctx.ui.theme.fg("warning", "сессия истекла: /alibaba-usage login")}`);
+      setStatus(ctx, `${ctx.ui.theme.fg("muted", STATUS_LABEL)} ${ctx.ui.theme.fg("warning", "сессия истекла: /alibaba-usage login")}`);
       return;
     }
     const report =
@@ -1093,13 +1085,13 @@ export default function alibabaUsage(pi: ExtensionAPI) {
       if (!force && shownKey === key) return;
       shownKey = key;
       clearTimers();
-      setStatus(ctx, `${ctx.ui.theme.fg("muted", "TP")} ${ctx.ui.theme.fg("dim", "n/a")}`);
+      setStatus(ctx, `${ctx.ui.theme.fg("muted", STATUS_LABEL)} ${ctx.ui.theme.fg("dim", "n/a")}`);
       return;
     }
     const key = "loading";
     if (!force && shownKey === key) return;
     shownKey = key;
-    setStatus(ctx, `${ctx.ui.theme.fg("muted", "TP")} ${ctx.ui.theme.fg("dim", "…")}`);
+    setStatus(ctx, `${ctx.ui.theme.fg("muted", STATUS_LABEL)} ${ctx.ui.theme.fg("dim", "…")}`);
   };
 
   const refresh = async (ctx: ExtensionContext, force: boolean): Promise<void> => {

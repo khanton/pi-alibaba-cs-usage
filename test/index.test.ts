@@ -92,6 +92,8 @@ describe("pi-alibaba-cs-usage extension", () => {
 
     const text = ctx.ui.setStatus.mock.calls.at(-1)?.[1];
     expect(text).toContain("/alibaba-usage login");
+    expect(text.startsWith("alibaba ")).toBe(true);
+    expect(text).not.toContain("TP");
   });
 
   it("clears the status and stops the footer subscription on shutdown", () => {
@@ -187,5 +189,90 @@ describe("weekly/monthly days-left display", () => {
     expect(widget.content.text).toContain("· 6d");
     // 5h at 45% is below the 75% threshold -> no '~reset' shown for the short window.
     expect(widget.content.text).not.toContain("~");
+  });
+});
+
+describe("built-in status line (without pi-fancy-footer)", () => {
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const now = 1_000_000_000_000;
+  const BAR_GLYPHS = "⠀▘▝▖▌▞▛▗▚▐▜▄▙▟█";
+  const win = (key: string, label: string, durationHours: number, usedPercent: number, resetAt?: number) => ({
+    key,
+    label,
+    durationHours,
+    usedPercent,
+    resetAt,
+  });
+  const report = (windows: ReturnType<typeof win>[]) => ({ windows, fetchedAt: now });
+  const twoWindows = report([
+    win("per5Hour", "5h", 5, 40, now + 2 * HOUR),
+    win("per1Week", "1w", 168, 10, now + 6 * DAY + 3 * HOUR),
+  ]);
+
+  beforeEach(() => {
+    vi.setSystemTime(now);
+  });
+
+  it("is prefixed with 'alibaba' and labels each bar with its quota window", () => {
+    const text = mod.formatStatusline(makeCtx() as never, twoWindows, false);
+    expect(text).toBe("alibaba 5h ███⠀⠀ 1w ████▌ · 6d");
+    expect(text).not.toContain("TP");
+  });
+
+  it("draws a narrow 5-cell bar per window and keeps the rest in the panel", () => {
+    const text = mod.formatStatusline(
+      makeCtx() as never,
+      report([...twoWindows.windows, win("per1Month", "1mo", 720, 30, now + 9 * DAY)]),
+      false,
+    );
+    expect([...text].filter((ch) => BAR_GLYPHS.includes(ch))).toHaveLength(2 * 5);
+    expect(text).not.toContain("1mo");
+  });
+
+  it("fills the bar proportionally to the remaining quota", () => {
+    const bar = (usedPercent: number) => mod.formatSingleLimitBar(win("per5Hour", "5h", 5, usedPercent));
+    expect(bar(0)).toBe("█".repeat(5));
+    expect(bar(50)).toBe("██▌⠀⠀");
+    expect(bar(100)).toBe("⠀".repeat(5));
+    expect(mod.formatSingleLimitBar(win("per5Hour", "5h", 5, 0), 3)).toBe("███");
+  });
+
+  it("renders a single window with its own label and countdown", () => {
+    const text = mod.formatStatusline(makeCtx() as never, report([win("per5Hour", "5h", 5, 40, now + 2 * HOUR)]), false);
+    expect(text).toBe("alibaba 5h ███⠀⠀ 2h");
+  });
+
+  it("uses the same plan labels as the footer widget for day/month windows", () => {
+    const text = mod.formatStatusline(
+      makeCtx() as never,
+      report([win("per1Day", "1d", 24, 20, now + 20 * HOUR), win("per1Month", "1mo", 720, 30, now + 9 * DAY)]),
+      false,
+    );
+    expect(text).toContain("1d ");
+    expect(text).toContain("1mo ");
+    expect(text).toContain("· 9d");
+  });
+
+  it("highlights an exhausted window and keeps both reset countdowns", () => {
+    const backgrounds: string[] = [];
+    const ctx = makeCtx();
+    ctx.ui.theme.bg = (color: string, text: string) => {
+      backgrounds.push(color);
+      return text;
+    };
+    const text = mod.formatStatusline(
+      ctx as never,
+      report([win("per5Hour", "5h", 5, 100, now + 2 * HOUR), win("per1Week", "1w", 168, 10, now + 6 * DAY)]),
+      false,
+    );
+    expect(backgrounds).toEqual(["toolErrorBg", "userMessageBg"]);
+    expect(text).toContain(`5h ${"⠀".repeat(5)}`);
+    expect(text).toContain("2h · 6d");
+  });
+
+  it("marks stale data and reports missing windows", () => {
+    expect(mod.formatStatusline(makeCtx() as never, twoWindows, true).endsWith("· устарело")).toBe(true);
+    expect(mod.formatStatusline(makeCtx() as never, report([]), false)).toBe("alibaba n/a");
   });
 });
