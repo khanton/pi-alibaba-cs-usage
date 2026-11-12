@@ -511,14 +511,31 @@ function formatResetCountdown(resetAt: number, now: number): string {
   return `${Math.floor(remainingMs / SECOND_MS)}s`;
 }
 
-function statusCountdown(primary: UsageWindow, secondary: UsageWindow | undefined, now: number): string | undefined {
+/** Weekly/monthly windows show whole days left (after a middle dot) instead of an h/m countdown. */
+export function isLongWindow(window: UsageWindow): boolean {
+  return /Week|Month/.test(window.key);
+}
+
+/** Whole days until reset ("6d"); falls back to the h/m/s countdown when <1 day, "now" when past. */
+export function formatDaysLeft(resetAt: number, now: number): string {
+  const remainingMs = resetAt - now;
+  if (remainingMs <= 0) return "now";
+  const days = Math.floor(remainingMs / (24 * HOUR_MS));
+  return days >= 1 ? `${days}d` : formatResetCountdown(resetAt, now);
+}
+
+export function statusCountdown(primary: UsageWindow, secondary: UsageWindow | undefined, now: number): string | undefined {
   if (isExhausted(primary) && primary.resetAt) {
     const p = formatResetCountdown(primary.resetAt, now);
-    const s = secondary?.resetAt ? formatResetCountdown(secondary.resetAt, now) : undefined;
-    return s ? `${p}/${s}` : p;
+    if (secondary?.resetAt) {
+      if (isLongWindow(secondary)) return `${p} · ${formatDaysLeft(secondary.resetAt, now)}`;
+      return `${p}/${formatResetCountdown(secondary.resetAt, now)}`;
+    }
+    return isLongWindow(primary) ? `· ${formatDaysLeft(primary.resetAt, now)}` : p;
   }
-  const weeklyReset = (secondary ?? primary).resetAt;
-  return weeklyReset ? formatResetCountdown(weeklyReset, now) : undefined;
+  const win = secondary ?? primary;
+  if (!win.resetAt) return undefined;
+  return isLongWindow(win) ? `· ${formatDaysLeft(win.resetAt, now)}` : formatResetCountdown(win.resetAt, now);
 }
 
 function formatStatusline(ctx: ExtensionContext, report: UsageReport, stale: boolean): string {
@@ -670,7 +687,7 @@ function formatStandardReset(resetAtMs: number | undefined, nowMs: number): stri
   return "~now";
 }
 
-function buildFooterWidget(report: UsageReport, now: number) {
+export function buildFooterWidget(report: UsageReport, now: number) {
   const look = readFancyLook();
   const windows = report.windows.slice(0, 2);
   let text: string;
@@ -692,14 +709,24 @@ function buildFooterWidget(report: UsageReport, now: number) {
       if (gauge.filledGlyphs) spans.push({ text: gauge.filledGlyphs, color: gauge.fillColor });
       if (gauge.emptyGlyphs) spans.push({ text: gauge.emptyGlyphs, color: "dim" });
       spans.push({ text: ` ${gauge.percentText}`, color: look.textColor });
-      const role = index === 0 ? "primary" : "secondary";
-      const roleEnabled = look.showReset === "all" || (look.showReset === "primary" && role === "primary");
-      const displayedUsed = Math.round(win.usedPercent * 10) / 10;
-      if (roleEnabled && win.resetAt !== undefined && displayedUsed >= look.resetMinUsedPercent) {
-        const reset = formatStandardReset(win.resetAt, now);
-        if (reset) {
-          text += ` ${reset}`;
-          spans.push({ text: ` ${reset}`, color: "dim" });
+      if (isLongWindow(win)) {
+        // Weekly/monthly: always show whole days left after a middle dot (· 6d),
+        // regardless of the resetMinUsedPercent threshold used for short windows.
+        if (win.resetAt !== undefined) {
+          const days = ` · ${formatDaysLeft(win.resetAt, now)}`;
+          text += days;
+          spans.push({ text: days, color: "dim" });
+        }
+      } else {
+        const role = index === 0 ? "primary" : "secondary";
+        const roleEnabled = look.showReset === "all" || (look.showReset === "primary" && role === "primary");
+        const displayedUsed = Math.round(win.usedPercent * 10) / 10;
+        if (roleEnabled && win.resetAt !== undefined && displayedUsed >= look.resetMinUsedPercent) {
+          const reset = formatStandardReset(win.resetAt, now);
+          if (reset) {
+            text += ` ${reset}`;
+            spans.push({ text: ` ${reset}`, color: "dim" });
+          }
         }
       }
     });

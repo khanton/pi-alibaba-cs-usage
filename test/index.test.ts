@@ -16,6 +16,7 @@ vi.mock("node:fs", () => ({
 }));
 vi.mock("node:os", () => ({ homedir: () => "/test-home" }));
 
+let mod: typeof import("../index.js");
 let extension: (typeof import("../index.js"))["default"];
 
 function makePi() {
@@ -54,7 +55,7 @@ describe("pi-alibaba-cs-usage extension", () => {
     vi.resetModules();
     vi.useFakeTimers();
     vi.stubEnv("BAILIAN_CONSOLE_TOKEN", "");
-    extension = (await import("../index.js")).default;
+    extension = (mod = await import("../index.js")).default;
   });
 
   afterEach(() => {
@@ -127,5 +128,64 @@ describe("pi-alibaba-cs-usage extension", () => {
     await commands.get("alibaba-usage")!.handler("token", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith("Использование: /alibaba-usage token <console access token>", "warning");
+  });
+});
+
+describe("weekly/monthly days-left display", () => {
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const now = 1_000_000_000_000;
+  const win = (key: string, label: string, durationHours: number, usedPercent: number, resetAt?: number) => ({
+    key,
+    label,
+    durationHours,
+    usedPercent,
+    resetAt,
+  });
+
+  it("isLongWindow detects week/month but not hour/day", () => {
+    expect(mod.isLongWindow(win("per1Week", "1w", 168, 10))).toBe(true);
+    expect(mod.isLongWindow(win("per1Month", "1mo", 720, 10))).toBe(true);
+    expect(mod.isLongWindow(win("per5Hour", "5h", 5, 10))).toBe(false);
+    expect(mod.isLongWindow(win("per1Day", "1d", 24, 10))).toBe(false);
+  });
+
+  it("formatDaysLeft shows whole days, falls back under a day, 'now' when past", () => {
+    expect(mod.formatDaysLeft(now + 6 * DAY + 3 * HOUR, now)).toBe("6d");
+    expect(mod.formatDaysLeft(now + 25 * DAY, now)).toBe("25d");
+    expect(mod.formatDaysLeft(now + 5 * HOUR, now)).toBe("5h");
+    expect(mod.formatDaysLeft(now - HOUR, now)).toBe("now");
+  });
+
+  it("statusCountdown uses '· Nd' for the weekly window", () => {
+    const primary = win("per5Hour", "5h", 5, 40, now + 2 * HOUR);
+    const secondary = win("per1Week", "1w", 168, 10, now + 6 * DAY + 3 * HOUR);
+    expect(mod.statusCountdown(primary, secondary, now)).toBe("· 6d");
+  });
+
+  it("statusCountdown keeps the h/m countdown for a short-only report", () => {
+    const primary = win("per5Hour", "5h", 5, 40, now + 2 * HOUR);
+    expect(mod.statusCountdown(primary, undefined, now)).toBe("2h");
+  });
+
+  it("statusCountdown shows primary reset · weekly days when primary is exhausted", () => {
+    const primary = win("per5Hour", "5h", 5, 100, now + 2 * HOUR);
+    const secondary = win("per1Week", "1w", 168, 10, now + 6 * DAY + 3 * HOUR);
+    expect(mod.statusCountdown(primary, secondary, now)).toBe("2h · 6d");
+  });
+
+  it("footer widget always shows '· Nd' for weekly, even below the reset threshold", () => {
+    const report = {
+      fetchedAt: now,
+      windows: [
+        win("per5Hour", "5h", 5, 45, now + 2 * HOUR),
+        win("per1Week", "1w", 168, 10, now + 6 * DAY + 3 * HOUR),
+      ],
+    };
+    const widget = mod.buildFooterWidget(report, now);
+    expect(widget.content.text).toContain("1w");
+    expect(widget.content.text).toContain("· 6d");
+    // 5h at 45% is below the 75% threshold -> no '~reset' shown for the short window.
+    expect(widget.content.text).not.toContain("~");
   });
 });

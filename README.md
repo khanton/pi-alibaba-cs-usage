@@ -6,9 +6,9 @@ A [pi](https://github.com/earendil-works/pi) extension that shows the remaining 
 
 Displays the remaining quota per window (5h / weekly / monthly) and the time until the next reset. Data comes from the official Bailian console gateway (the same protocol as the `bl usage token-plan` CLI), without depending on the CLI itself.
 
-- Compact braille bar in the status line: the left half of each cell is the nearest quota window (5h), the right half is the next one (weekly), plus a countdown to reset. The monthly window stays in the detailed panel.
+- Compact braille bar in the status line: the left half of each cell is the nearest quota window (5h), the right half is the next one (weekly), plus a countdown to reset. Weekly/monthly windows show whole days left after a middle dot (e.g. `· 6d`). The monthly window stays in the detailed panel.
 - The status is shown only while the active model's provider matches the configured one (default `alibaba-plan`).
-- Optional widget for pi-fancy-footer via the pi event bus — no hard dependency; without the footer the status stays in pi's built-in status line.
+- Optional widget for pi-fancy-footer via the pi event bus — no hard dependency; without the footer the status stays in pi's built-in status line. In the widget, weekly/monthly windows always show `· Nd` days left (short windows keep the threshold-gated `~reset`).
 - Multiple pi instances share one cache and one refresh leader (claim lock + exponential backoff), so the gateway is not hammered.
 
 ## Requirements
